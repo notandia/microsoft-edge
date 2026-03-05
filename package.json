@@ -11,6 +11,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "dompurify": "^3.2.6"
+    "dompurify": "^3.3.2"
   }
 }
