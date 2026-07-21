@@ -16,6 +16,8 @@ function loadScript(relativePath, additions = {}) {
     URL,
     URLSearchParams,
     AbortController,
+    Map,
+    Set,
     ...additions
   };
   context.window = context.window || {};
