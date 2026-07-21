@@ -89,7 +89,7 @@ test('NCBI lookups validate, deduplicate, and enforce the per-page budget', asyn
   };
 
   const window = { MDPIFilterSettings: { ncbiApiEnabled: true } };
-  const context = loadScript('content/ncbi_api_handler.js', { window, fetch });
+  loadScript('content/ncbi_api_handler.js', { window, fetch });
   const handler = window.MDPIFilterNcbiApiHandler;
   const runCache = new Map();
   const persistentCache = new Map();
@@ -134,4 +134,5 @@ test('release workflow pins actions and does not embed NCBI secrets', () => {
   assert.match(workflow, /npm ci --ignore-scripts/);
   assert.match(workflow, /DOMPurify 3\.4\.12/);
   assert.match(workflow, /persist-credentials:\s+false/);
+  assert.match(workflow, /manifest\.version_name = process\.env\.RELEASE_VERSION/);
 });
