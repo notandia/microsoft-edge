@@ -85,11 +85,11 @@ function verifyHtml(absolutePath) {
 function verifyWorkflow(absolutePath) {
   const relativePath = path.relative(root, absolutePath);
   const source = fs.readFileSync(absolutePath, 'utf8');
-  const actionUses = source.matchAll(/^\s*uses:\s*([^\s]+)\s*$/gm);
+  const actionUses = source.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s*#.*)?\s*$/gm);
   for (const match of actionUses) {
     const reference = match[1];
     if (reference.startsWith('./') || reference.startsWith('docker://')) continue;
-    if (!/@[0-9a-f]{40}(?:\s*#.*)?$/i.test(reference)) {
+    if (!/@[0-9a-f]{40}$/i.test(reference)) {
       fail(`GitHub Action is not pinned to a full commit SHA in ${relativePath}: ${reference}`);
     }
   }
