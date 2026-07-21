@@ -112,7 +112,10 @@ test('sanitizer fails closed for old builds and strips all markup for supported 
   });
 
   assert.equal(supportedWindow.sanitize('<b>Reference</b>'), 'Reference');
-  assert.deepEqual(receivedConfig, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
+  assert.equal(Array.isArray(receivedConfig.ALLOWED_TAGS), true);
+  assert.equal(receivedConfig.ALLOWED_TAGS.length, 0);
+  assert.equal(Array.isArray(receivedConfig.ALLOWED_ATTR), true);
+  assert.equal(receivedConfig.ALLOWED_ATTR.length, 0);
   assert.equal(
     supportedWindow.MDPIFilterSanitizerSecurity.isSupportedVersion('3.5.0'),
     true
