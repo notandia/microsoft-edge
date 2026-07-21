@@ -5,12 +5,12 @@
   "main": "background.js",
   "scripts": {
     "build": "cp node_modules/dompurify/dist/purify.min.js content/dompurify.min.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/*.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "dompurify": "^3.2.6"
+    "dompurify": "3.4.12"
   }
 }
