@@ -79,6 +79,46 @@ test('popup reporting removes query strings and fragments', () => {
   assert.equal(context.window.MDPIFilterPopupSecurity.isSafeReferenceId('ref"]'), false);
 });
 
+test('sanitizer fails closed for old builds and strips all markup for supported builds', () => {
+  let outdatedCalls = 0;
+  const outdatedPurifier = {
+    version: '3.2.6',
+    sanitize() {
+      outdatedCalls += 1;
+      return 'unsafe';
+    }
+  };
+  const outdatedWindow = { DOMPurify: outdatedPurifier };
+  loadScript('content/sanitizer.js', {
+    window: outdatedWindow,
+    DOMPurify: outdatedPurifier
+  });
+
+  assert.equal(outdatedWindow.sanitize('<img src=x onerror=alert(1)>'), '');
+  assert.equal(outdatedCalls, 0);
+
+  let receivedConfig = null;
+  const supportedPurifier = {
+    version: '3.4.12',
+    sanitize(input, config) {
+      receivedConfig = config;
+      return input.replace(/<[^>]+>/g, '');
+    }
+  };
+  const supportedWindow = { DOMPurify: supportedPurifier };
+  loadScript('content/sanitizer.js', {
+    window: supportedWindow,
+    DOMPurify: supportedPurifier
+  });
+
+  assert.equal(supportedWindow.sanitize('<b>Reference</b>'), 'Reference');
+  assert.deepEqual(receivedConfig, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
+  assert.equal(
+    supportedWindow.MDPIFilterSanitizerSecurity.isSupportedVersion('3.5.0'),
+    true
+  );
+});
+
 test('NCBI lookups validate, deduplicate, and enforce the per-page budget', async () => {
   const requestedUrls = [];
   const fetch = async url => {
