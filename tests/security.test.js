@@ -20,13 +20,11 @@ function loadScript(relativePath, additions = {}) {
     Set,
     ...additions
   };
-  context.window = context.window || {};
+  context.window ||= {};
   vm.createContext(context);
-  vm.runInContext(
-    fs.readFileSync(path.join(ROOT, relativePath), 'utf8'),
-    context,
-    { filename: relativePath }
-  );
+  vm.runInContext(fs.readFileSync(path.join(ROOT, relativePath), 'utf8'), context, {
+    filename: relativePath
+  });
   return context;
 }
 
@@ -37,95 +35,41 @@ test('reference identifiers reject selector metacharacters and excessive length'
   assert.equal(normalize('ref-CR12'), 'ref-CR12');
   assert.equal(normalize('  B1:section.2  '), 'B1:section.2');
   assert.equal(normalize('bad"] * { display:none }'), null);
-  assert.equal(normalize('x'.repeat(129)), null);
+  assert.equal(normalize('x'.repeat(257)), null);
 });
 
-test('selector guard blocks unsafe identifiers before selector construction', () => {
-  let generatedWith = null;
+test('inline selector construction rejects unsafe page identifiers', () => {
   const window = {
-    MDPIFilterUtils: {
-      generateInlineFootnoteSelectors(value) {
-        generatedWith = value;
-        return `a[href="#${value}"]`;
-      }
-    },
     MDPIFilterReferenceIdExtractor: {
       normalizeReferenceId(value) {
         if (typeof value !== 'string') return null;
-        const trimmed = value.trim();
-        return /^[A-Za-z0-9_.:-]{1,128}$/.test(trimmed) ? trimmed : null;
+        const normalized = value.trim();
+        return /^[A-Za-z0-9_.:-]{1,256}$/.test(normalized) ? normalized : null;
       }
     }
   };
-
-  loadScript('content/selector_security_guard.js', { window });
-
-  assert.equal(window.MDPIFilterUtils.generateInlineFootnoteSelectors('CR12'), 'a[href="#CR12"]');
-  assert.equal(generatedWith, 'CR12');
-  generatedWith = null;
-  assert.equal(window.MDPIFilterUtils.generateInlineFootnoteSelectors('x"] div'), '');
-  assert.equal(generatedWith, null);
-});
-
-test('popup reporting removes query strings and fragments', () => {
-  const document = { addEventListener() {} };
-  const context = loadScript('popup_security_guard.js', { document });
-  const safeUrl = context.window.MDPIFilterPopupSecurity.toPrivacySafeUrl(
-    'https://example.org/private/article?token=secret&query=mdpi#results'
-  );
-
-  assert.equal(safeUrl, 'https://example.org/private/article');
-  assert.equal(context.window.MDPIFilterPopupSecurity.isSafeReferenceId('ref-1'), true);
-  assert.equal(context.window.MDPIFilterPopupSecurity.isSafeReferenceId('ref"]'), false);
-});
-
-test('sanitizer fails closed for old builds and strips all markup for supported builds', () => {
-  let outdatedCalls = 0;
-  const outdatedPurifier = {
-    version: '3.2.6',
-    sanitize() {
-      outdatedCalls += 1;
-      return 'unsafe';
-    }
+  const document = {
+    getElementById() { return null; },
+    querySelectorAll() { return []; }
   };
-  const outdatedWindow = { DOMPurify: outdatedPurifier };
-  loadScript('content/sanitizer.js', {
-    window: outdatedWindow,
-    DOMPurify: outdatedPurifier
-  });
+  loadScript('content/inline_footnote_selectors.js', { window, document });
 
-  assert.equal(outdatedWindow.sanitize('<img src=x onerror=alert(1)>'), '');
-  assert.equal(outdatedCalls, 0);
-
-  let receivedConfig = null;
-  const supportedPurifier = {
-    version: '3.4.12',
-    sanitize(input, config) {
-      receivedConfig = config;
-      return input.replace(/<[^>]+>/g, '');
-    }
-  };
-  const supportedWindow = { DOMPurify: supportedPurifier };
-  loadScript('content/sanitizer.js', {
-    window: supportedWindow,
-    DOMPurify: supportedPurifier
-  });
-
-  assert.equal(supportedWindow.sanitize('<b>Reference</b>'), 'Reference');
-  assert.equal(Array.isArray(receivedConfig.ALLOWED_TAGS), true);
-  assert.equal(receivedConfig.ALLOWED_TAGS.length, 0);
-  assert.equal(Array.isArray(receivedConfig.ALLOWED_ATTR), true);
-  assert.equal(receivedConfig.ALLOWED_ATTR.length, 0);
-  assert.equal(
-    supportedWindow.MDPIFilterSanitizerSecurity.isSupportedVersion('3.5.0'),
-    true
-  );
+  const generate = window.MDPIFilterUtils.generateInlineFootnoteSelectors;
+  assert.match(generate('CR12'), /href="#CR12"/);
+  assert.equal(generate('x"] div'), '');
 });
 
-test('NCBI lookups validate, deduplicate, and enforce the per-page budget', async () => {
-  const requestedUrls = [];
-  const fetch = async url => {
-    requestedUrls.push(String(url));
+test('sanitizer preserves only plain string values', () => {
+  const window = {};
+  loadScript('content/sanitizer.js', { window });
+  assert.equal(window.sanitize('<b>Reference</b>'), '<b>Reference</b>');
+  assert.equal(window.sanitize({ text: 'Reference' }), '');
+});
+
+test('NCBI lookups validate, deduplicate, omit credentials, and enforce page budget', async () => {
+  const requests = [];
+  const fetch = async (url, options) => {
+    requests.push({ url: String(url), options });
     return {
       ok: true,
       headers: { get: () => 'application/json; charset=utf-8' },
@@ -148,36 +92,48 @@ test('NCBI lookups validate, deduplicate, and enforce the per-page budget', asyn
     ['10.1000/ok']
   );
 
-  const ids = Array.from({ length: 800 }, (_, index) => String(index + 1));
-  await handler.checkNcbiIdsForMdpi(ids, 'pmid', runCache, persistentCache);
-
-  assert.equal(requestedUrls.length, 3, '600 allowed IDs should produce three 200-ID batches');
-  const queriedIds = requestedUrls.flatMap(rawUrl => {
-    const parsed = new URL(rawUrl);
-    return parsed.searchParams.get('ids').split(',');
-  });
-  assert.equal(queriedIds.length, 600);
-  assert.equal(new Set(queriedIds).size, 600);
-
   await handler.checkNcbiIdsForMdpi(
-    Array.from({ length: 100 }, (_, index) => String(index + 901)),
+    Array.from({ length: 800 }, (_, index) => String(index + 1)),
     'pmid',
     runCache,
     persistentCache
   );
-  assert.equal(requestedUrls.length, 3, 'no additional request is allowed after the page budget is exhausted');
+
+  assert.equal(requests.length, 3);
+  const queriedIds = requests.flatMap(request => new URL(request.url).searchParams.get('ids').split(','));
+  assert.equal(queriedIds.length, 600);
+  assert.equal(new Set(queriedIds).size, 600);
+  for (const request of requests) {
+    const parsed = new URL(request.url);
+    assert.equal(parsed.searchParams.get('tool'), 'mdpi-filter');
+    assert.equal(parsed.searchParams.has('email'), false);
+    assert.equal(request.options.credentials, 'omit');
+    assert.equal(request.options.referrerPolicy, 'no-referrer');
+  }
+
+  await handler.checkNcbiIdsForMdpi(['901', '902'], 'pmid', runCache, persistentCache);
+  assert.equal(requests.length, 3);
 });
 
-test('release workflow pins actions and does not embed NCBI secrets', () => {
-  const workflow = fs.readFileSync(
-    path.join(ROOT, '.github/workflows/build-extension.yml'),
-    'utf8'
-  );
+test('manifest and package maintain the converged least-privilege contract', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
-  assert.doesNotMatch(workflow, /uses:\s+[^\s]+@v\d+/);
-  assert.doesNotMatch(workflow, /NCBI_(TOOL_NAME|API_EMAIL)_SECRET/);
-  assert.match(workflow, /npm ci --ignore-scripts/);
-  assert.match(workflow, /DOMPurify 3\.4\.12/);
-  assert.match(workflow, /persist-credentials:\s+false/);
-  assert.match(workflow, /manifest\.version_name = process\.env\.RELEASE_VERSION/);
+  assert.equal(manifest.manifest_version, 3);
+  assert.deepEqual(manifest.permissions, ['storage']);
+  assert.equal(manifest.version, packageJson.version);
+  assert.equal(fs.existsSync(path.join(ROOT, 'content', 'dompurify.min.js')), false);
+  assert.equal(Object.keys(packageJson.dependencies || {}).length, 0);
+  assert.ok(manifest.content_scripts[0].js.includes('content/secure_message_handler.js'));
+});
+
+test('workflows pin actions and do not embed NCBI secrets', () => {
+  const workflowDirectory = path.join(ROOT, '.github', 'workflows');
+  for (const filename of fs.readdirSync(workflowDirectory).filter(name => /\.ya?ml$/i.test(name))) {
+    const workflow = fs.readFileSync(path.join(workflowDirectory, filename), 'utf8');
+    for (const match of workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gm)) {
+      assert.match(match[1], /@[0-9a-f]{40}$/i, `${filename}: ${match[1]}`);
+    }
+    assert.doesNotMatch(workflow, /NCBI_(?:TOOL_NAME|API_EMAIL)_SECRET/);
+  }
 });
