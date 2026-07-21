@@ -1,175 +1,213 @@
 // content/ncbi_api_handler.js
 
 if (typeof window.MDPIFilterNcbiApiHandler === 'undefined') {
-  // console.log("[MDPI Filter NCBI API] Initializing NCBI API Handler module...");
+  const MDPI_DOMAINS = ['mdpi.com', 'mdpi.org'];
+  const MDPI_DOI_PREFIX = '10.3390';
 
-  const MDPI_DOMAINS = ['mdpi.com', 'mdpi.org']; // Needed for checking journal names, though not directly used in API call itself for MDPI status
-  const MDPI_DOI_PREFIX = '10.3390'; // For identifying MDPI DOIs
+  // A hostile page can manufacture arbitrary reference-looking elements. Keep
+  // cross-origin work and memory bounded for the lifetime of this page.
+  const MAX_IDS_PER_PAGE = 600;
+  const BATCH_SIZE = 200;
+  const PAUSE_MS = 350;
+  const REQUEST_TIMEOUT_MS = 10000;
+  const MAX_CACHE_ENTRIES = 1000;
+
+  const queriedIdsThisPage = new Set();
+  let remainingLookupBudget = MAX_IDS_PER_PAGE;
+
+  function normalizeIdsForQuery(ids, idType) {
+    if (!Array.isArray(ids)) return [];
+
+    const normalized = [];
+    const seen = new Set();
+
+    for (const rawId of ids) {
+      if (rawId === null || typeof rawId === 'undefined') continue;
+
+      let id = String(rawId).trim();
+      if (!id) continue;
+
+      if (idType === 'doi') {
+        id = id.split('#')[0].split('?')[0].trim().toLowerCase();
+        // Commas are excluded because NCBI uses them as the batch delimiter.
+        if (!/^10\.\d{4,9}\/[^\s"',<>&]{1,240}$/.test(id)) continue;
+      } else if (idType === 'pmid') {
+        if (!/^\d{1,12}$/.test(id)) continue;
+      } else if (idType === 'pmcid') {
+        id = id.toUpperCase();
+        if (!/^PMC\d{1,12}$/.test(id)) continue;
+      } else {
+        return [];
+      }
+
+      if (!seen.has(id)) {
+        seen.add(id);
+        normalized.push(id);
+      }
+    }
+
+    return normalized;
+  }
+
+  function setBoundedCache(cache, key, value) {
+    if (!(cache instanceof Map)) return;
+
+    if (cache.has(key)) cache.delete(key);
+    cache.set(key, value);
+
+    while (cache.size > MAX_CACHE_ENTRIES) {
+      const oldestKey = cache.keys().next().value;
+      cache.delete(oldestKey);
+    }
+  }
+
+  function markBatchAsFalse(batchIds, runCache, ncbiApiCache, persist = true) {
+    batchIds.forEach(id => {
+      runCache.set(id, false);
+      if (persist) setBoundedCache(ncbiApiCache, id, false);
+    });
+  }
+
+  async function fetchJsonWithTimeout(url) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer'
+      });
+
+      if (!response.ok) {
+        throw new Error(`NCBI API request failed with HTTP ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.toLowerCase().includes('application/json')) {
+        throw new Error(`NCBI API returned unexpected content type: ${contentType}`);
+      }
+
+      return await response.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   async function checkNcbiIdsForMdpi(ids, idType, runCache, ncbiApiCache) {
-    // Respect user opt-out for NCBI API
     if (window.MDPIFilterSettings && window.MDPIFilterSettings.ncbiApiEnabled === false) {
-      console.log("[MDPI Filter NCBI API] Skipping lookup: user opt-out");
       return false;
     }
-    // Filter out DOIs with fragments or invalid chars
-    if (idType === 'doi') {
-      ids = ids.map(id => id.split('#')[0].split('?')[0].trim())
-               .filter(id => /^[0-9.]+\/[^\s"'<>&]+$/.test(id));
-    }
 
-    console.log(`[MDPI Filter NCBI API DEBUG] >>> checkNcbiIdsForMdpi ENTRY. Type: ${idType}, IDs to check:`, JSON.parse(JSON.stringify(ids)));
-
-    if (!ids || ids.length === 0) {
-      console.log("[MDPI Filter NCBI API DEBUG] No IDs provided. Returning false.");
+    if (!(runCache instanceof Map) || !(ncbiApiCache instanceof Map)) {
       return false;
     }
+
+    const normalizedIds = normalizeIdsForQuery(ids, idType);
+    if (normalizedIds.length === 0) return false;
 
     const idsToQueryApi = [];
-    ids.forEach(id => {
+
+    for (const id of normalizedIds) {
       if (ncbiApiCache.has(id)) {
-        const cachedValue = ncbiApiCache.get(id);
-        runCache.set(id, cachedValue);
-        console.log(`[MDPI Filter NCBI API DEBUG] ID '${id}' (type: ${idType}) found in ncbiApiCache. Value:`, cachedValue);
-      } else {
-        console.log(`[MDPI Filter NCBI API DEBUG] ID '${id}' (type: ${idType}) NOT in ncbiApiCache. Will query API.`);
-        idsToQueryApi.push(id);
+        runCache.set(id, ncbiApiCache.get(id));
+        continue;
       }
-    });
 
-    console.log(`[MDPI Filter NCBI API DEBUG] IDs to query API (after ncbiApiCache check): ${idsToQueryApi.length}`, JSON.parse(JSON.stringify(idsToQueryApi)));
+      // Do not repeatedly query an identifier after a failed/empty lookup.
+      if (queriedIdsThisPage.has(id)) {
+        if (!runCache.has(id)) runCache.set(id, false);
+        continue;
+      }
 
-    if (idsToQueryApi.length === 0) {
-      console.log("[MDPI Filter NCBI API DEBUG] All IDs were found in ncbiApiCache. Skipping API call.");
-      const anyMdpiInCache = ids.some(id => runCache.get(id) === true);
-      console.log(`[MDPI Filter NCBI API DEBUG] Result based on ncbiApiCache only: ${anyMdpiInCache}`);
-      return anyMdpiInCache;
+      if (remainingLookupBudget <= 0) {
+        runCache.set(id, false);
+        continue;
+      }
+
+      queriedIdsThisPage.add(id);
+      remainingLookupBudget -= 1;
+      idsToQueryApi.push(id);
     }
 
-    const BATCH_SIZE = 200;
-    const PAUSE_MS = 350;   // ~3 calls/sec
+    let overallFoundMdpiInBatches = normalizedIds.some(id => runCache.get(id) === true);
 
     for (let i = 0; i < idsToQueryApi.length; i += BATCH_SIZE) {
-      const batchIdsToQuery = idsToQueryApi.slice(i, i + BATCH_SIZE);
-      if (batchIdsToQuery.length === 0) continue;
-
-      const idsString = batchIdsToQuery.join(',');
-      const encodedIdType = encodeURIComponent(idType);
-      const toolName = '%%NCBI_TOOL_NAME%%'; // Placeholder for tool name
-      const maintainerEmail = '%%NCBI_API_EMAIL%%'; // Placeholder for email
-      const encodedToolName = encodeURIComponent(toolName);
-      const encodedMaintainerEmail = encodeURIComponent(maintainerEmail);
-
-      const apiUrl = `https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids=${idsString}&idtype=${encodedIdType}&format=json&versions=no&tool=${encodedToolName}&email=${encodedMaintainerEmail}`;
-      console.log(`[MDPI Filter NCBI API DEBUG] Querying NCBI API for batch (type ${idType}). URL: ${apiUrl}`, JSON.parse(JSON.stringify(batchIdsToQuery)));
+      const batchIds = idsToQueryApi.slice(i, i + BATCH_SIZE);
+      const apiUrl = new URL('https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/');
+      apiUrl.search = new URLSearchParams({
+        ids: batchIds.join(','),
+        idtype: idType,
+        format: 'json',
+        versions: 'no',
+        tool: 'mdpi-filter-edge'
+      }).toString();
 
       try {
-        const response = await fetch(apiUrl);
-        if (response.ok) {
-          // Defensive: check content-type
-          const contentType = response.headers.get('content-type') || '';
-          if (!contentType.includes('application/json')) {
-            console.error(`[MDPI Filter NCBI API DEBUG] NCBI API did not return JSON. Content-Type: ${contentType}`);
-            batchIdsToQuery.forEach(id => {
-              if (!runCache.has(id)) runCache.set(id, false);
-              if (!ncbiApiCache.has(id)) ncbiApiCache.set(id, false);
-            });
-            continue;
-          }
-          const data = await response.json();
-          console.log(`[MDPI Filter NCBI API DEBUG] Received API data for batch (type ${idType}):`, JSON.parse(JSON.stringify(data)));
-          const processedInThisBatch = new Set();
+        const data = await fetchJsonWithTimeout(apiUrl.toString());
+        const processedInThisBatch = new Set();
 
-          if (data.records && data.records.length > 0) {
-            data.records.forEach(record => {
-              console.log(`[MDPI Filter NCBI API DEBUG] Processing API record:`, JSON.parse(JSON.stringify(record)));
-              const queriedId = batchIdsToQuery.find(qid =>
-                (record.pmid && qid.toString() === record.pmid.toString()) ||
-                (record.pmcid && qid.toString().toUpperCase() === record.pmcid.toString().toUpperCase()) ||
-                (record.doi && qid.toString().toLowerCase() === record.doi.toString().toLowerCase()) ||
-                (record.live && record.versions && record.versions[0] && record.versions[0].pmid && qid.toString() === record.versions[0].pmid.toString()) || 
-                (record.live && record.versions && record.versions[0] && record.versions[0].pmcid && qid.toString().toUpperCase() === record.versions[0].pmcid.toString().toUpperCase()) ||
-                (record.live && record.versions && record.versions[0] && record.versions[0].doi && qid.toString().toLowerCase() === record.versions[0].doi.toString().toLowerCase())
+        if (Array.isArray(data.records)) {
+          for (const record of data.records) {
+            if (!record || typeof record !== 'object') continue;
+
+            const queriedId = batchIds.find(qid =>
+              (record.pmid && qid === String(record.pmid)) ||
+              (record.pmcid && qid === String(record.pmcid).toUpperCase()) ||
+              (record.doi && qid === String(record.doi).toLowerCase()) ||
+              (record.live && record.versions && record.versions[0] &&
+                ((record.versions[0].pmid && qid === String(record.versions[0].pmid)) ||
+                 (record.versions[0].pmcid && qid === String(record.versions[0].pmcid).toUpperCase()) ||
+                 (record.versions[0].doi && qid === String(record.versions[0].doi).toLowerCase())))
+            );
+
+            if (!queriedId) continue;
+            processedInThisBatch.add(queriedId);
+
+            let isMdpi = false;
+            const effectiveDoi = record.doi ||
+              (record.versions && record.versions[0] ? record.versions[0].doi : null);
+
+            if (effectiveDoi) {
+              isMdpi = String(effectiveDoi).toLowerCase().startsWith(MDPI_DOI_PREFIX);
+            } else if (typeof record.journal === 'string') {
+              const journalHost = record.journal.toLowerCase();
+              isMdpi = MDPI_DOMAINS.some(
+                domain => journalHost === domain || journalHost.endsWith(`.${domain}`)
               );
+            }
 
-              if (queriedId) {
-                processedInThisBatch.add(queriedId.toString());
-                let isMdpi = false;
-                const effectiveDoi = record.doi || (record.versions && record.versions[0] ? record.versions[0].doi : null);
-                if (effectiveDoi) {
-                  if (effectiveDoi.startsWith(MDPI_DOI_PREFIX)) {
-                    isMdpi = true;
-                  }
-                } else if (record.journal && typeof record.journal === 'string') {
-                  const journalHost = record.journal.toLowerCase();
-                  for (const domain of MDPI_DOMAINS) {
-                    if (journalHost === domain || journalHost.endsWith('.' + domain)) {
-                      isMdpi = true;
-                      break; // Found a match, no need to check other domains
-                    }
-                  }
-                }
-
-                console.log(`[MDPI Filter NCBI API DEBUG] DIAGNOSTIC: Before runCache.set for ID '${queriedId}'. runCache type: ${typeof runCache}, is Map: ${runCache instanceof Map}, runCache value:`, runCache);
-                
-                runCache.set(queriedId, isMdpi);
-                ncbiApiCache.set(queriedId, isMdpi);
-                if (isMdpi) {
-                  overallFoundMdpiInBatches = true;
-                }
-              } else {
-                console.log(`[MDPI Filter NCBI API DEBUG] API record did not match any queried ID in this batch:`, JSON.parse(JSON.stringify(record)));
-              }
-            });
-          } else {
-            console.log(`[MDPI Filter NCBI API DEBUG] API response OK, but no records found in data for batch (type ${idType}).`);
+            runCache.set(queriedId, isMdpi);
+            setBoundedCache(ncbiApiCache, queriedId, isMdpi);
+            overallFoundMdpiInBatches ||= isMdpi;
           }
+        }
 
-          batchIdsToQuery.forEach(id => {
-            if (!processedInThisBatch.has(id.toString())) {
-              console.log(`[MDPI Filter NCBI API DEBUG] ID '${id}' (type ${idType}) was in API query batch but not in response records. Marking as non-MDPI (false).`);
-              console.log(`[MDPI Filter NCBI API DEBUG] DIAGNOSTIC: Before runCache.set (unprocessed ID) for ID '${id}'. runCache type: ${typeof runCache}, is Map: ${runCache instanceof Map}`);
-              if (!runCache.has(id)) runCache.set(id, false);
-              if (!ncbiApiCache.has(id)) ncbiApiCache.set(id, false);
-            }
-          });
-
-        } else {
-          console.error(`[MDPI Filter NCBI API DEBUG] NCBI API request FAILED for batch (type ${idType}) ${batchIdsToQuery.join(', ')}: ${response.status} ${response.statusText}`);
-          batchIdsToQuery.forEach(id => {
-            console.log(`[MDPI Filter NCBI API DEBUG] DIAGNOSTIC: Before runCache.set (API failure) for ID '${id}'. runCache type: ${typeof runCache}, is Map: ${runCache instanceof Map}`);
-            if (!runCache.has(id)) {
-              runCache.set(id, false);
-            }
-          });
+        for (const id of batchIds) {
+          if (!processedInThisBatch.has(id)) {
+            runCache.set(id, false);
+            setBoundedCache(ncbiApiCache, id, false);
+          }
         }
       } catch (error) {
-        console.error(`[MDPI Filter NCBI API DEBUG] Network/Processing ERROR for NCBI batch (type ${idType}) ${batchIdsToQuery.join(', ')}:`, error);
-        batchIdsToQuery.forEach(id => {
-          console.log(`[MDPI Filter NCBI API DEBUG] DIAGNOSTIC: Before runCache.set (catch block) for ID '${id}'. runCache type: ${typeof runCache}, is Map: ${runCache instanceof Map}`);
-          if (!runCache.has(id)) {
-            runCache.set(id, false);
-          }
-        });
+        // Fail closed for this page and avoid retry storms. Network failures are
+        // not persisted in the long-lived cache so a page reload can retry.
+        markBatchAsFalse(batchIds, runCache, ncbiApiCache, false);
+        console.warn('[MDPI Filter] NCBI lookup failed:', error);
       }
 
-      // throttle: wait before next request if more batches remain
       if (i + BATCH_SIZE < idsToQueryApi.length) {
         await new Promise(resolve => setTimeout(resolve, PAUSE_MS));
       }
     }
 
-    const finalResult = ids.some(id => runCache.get(id) === true);
-    console.log(`[MDPI Filter NCBI API DEBUG] <<< checkNcbiIdsForMdpi EXIT. Final result for type ${idType} (any MDPI found): ${finalResult}. RunCache contents for these IDs:`);
-    ids.forEach(id => console.log(`    ID: ${id}, MDPI: ${runCache.get(id)}`));
-    return finalResult;
+    return overallFoundMdpiInBatches ||
+      normalizedIds.some(id => runCache.get(id) === true);
   }
 
   window.MDPIFilterNcbiApiHandler = {
-    checkNcbiIdsForMdpi
+    checkNcbiIdsForMdpi,
+    // Exposed for focused regression tests; not a privileged interface.
+    normalizeIdsForQuery
   };
-
-  // console.log("[MDPI Filter NCBI API] NCBI API Handler module loaded.");
-} else {
-  // console.log("[MDPI Filter NCBI API] NCBI API Handler module already loaded.");
 }
