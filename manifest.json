@@ -1,13 +1,11 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "description": "__MSG_extDesc__",
   "default_locale": "en",
   "permissions": [
-    "storage",
-    "scripting",
-    "webNavigation"
+    "storage"
   ],
   "host_permissions": [
     "https://*/*"
@@ -20,14 +18,14 @@
     "type": "module"
   },
   "icons": {
-    "16":  "icons/icon-16.png",
-    "48":  "icons/icon-48.png",
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
   "action": {
     "default_icon": {
-      "16":  "icons/icon-16.png",
-      "48":  "icons/icon-48.png",
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     },
     "default_title": "MDPI Filter",
@@ -42,7 +40,6 @@
       ],
       "js": [
         "content/utils.js",
-        "content/dompurify.min.js",
         "content/sanitizer.js",
         "content/domains.js",
         "content/cache_manager.js",
@@ -54,14 +51,15 @@
         "content/inline_footnote_styler.js",
         "content/cited_by_selectors.js",
         "content/cited_by_styler.js",
-        "content/similar_articles_selectors.js", 
-        "content/similar_articles_styler.js",   
+        "content/similar_articles_selectors.js",
+        "content/similar_articles_styler.js",
         "content/item_content_checker.js",
         "content/cited_by_processor.js",
-        "content/similar_articles_processor.js", 
+        "content/similar_articles_processor.js",
         "content/reference_id_extractor.js",
         "content/ncbi_api_handler.js",
-        "content/content_script.js"
+        "content/content_script.js",
+        "content/secure_message_handler.js"
       ],
       "run_at": "document_idle"
     }

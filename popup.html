@@ -7,10 +7,8 @@
 </head>
 <body>
   <div class="container">
-    <!-- Title -->
     <h1>MDPI Filter</h1>
 
-    <!-- Settings Icon (gear matching MDPI style) -->
     <button id="settingsIcon" title="Settings" aria-label="Settings">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
            stroke="#36406B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -37,7 +35,6 @@
       </svg>
     </button>
 
-    <!-- Settings Panel (hidden by default) -->
     <div id="settingsPanel" class="settings-panel">
       <p class="settings-title">Select how MDPI results are handled on search sites:</p>
       <label class="radio">
@@ -49,7 +46,6 @@
         <span>Hide MDPI results</span>
       </label>
       <hr class="separator">
-      <!-- New Settings for Potential MDPI Highlighting -->
       <p class="settings-title">Potential MDPI Site Highlighting (Google Search Only):</p>
       <div class="setting-item">
         <label class="checkbox-label" for="highlightPotentialMdpi">
@@ -61,7 +57,6 @@
         <label for="potentialMdpiColor" class="color-label">Highlight Color:</label>
         <input type="color" id="potentialMdpiColor" class="color-picker-input">
       </div>
-      <!-- Advanced Settings -->
       <hr class="separator">
       <p class="settings-title">Advanced Settings</p>
       <div class="setting-item">
@@ -77,21 +72,16 @@
           <span class="setting-warning">Disabling reduces accuracy, leading to missed or incorrect highlights.</span>
         </label>
       </div>
-       <!-- End New Settings -->
-       <!-- Save button and status moved here -->
-       <button id="save">Save</button>
+      <button id="save">Save</button>
       <div id="status"></div>
     </div>
 
-    <!-- Section for MDPI References -->
     <h2><span id="referencesCount">Loading</span> MDPI References Found:</h2>
     <div id="referencesListContainer">
       <ul id="referencesList">
-        <!-- References will be injected here -->
         <li id="referencesPlaceholder" class="placeholder">Loading references...</li>
       </ul>
     </div>
-    <!-- End Section -->
 
     <hr class="separator">
     <button id="reportIssue" class="secondary">Report Filter Issue</button>

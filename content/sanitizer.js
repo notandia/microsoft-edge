@@ -1,17 +1,13 @@
 // content/sanitizer.js
-// window.sanitize = html => html.replace(/<[^>]+>/g, ''); // Original version
 
 /**
- * Basic HTML tag stripper.
- * NOTE: For robust XSS protection when setting innerHTML, using a dedicated library
- * like DOMPurify is strongly recommended, or preferably, avoid setting innerHTML
- * with dynamic content by using `textContent` and `document.createElement`.
- * This function is a naive approach and may not cover all XSS vectors.
+ * Normalizes page-derived reference snippets as plain text.
+ *
+ * Callers read these values from `textContent`, and the popup renders them with
+ * `textContent` as well. They must never be passed to an HTML parser or an
+ * `innerHTML` sink. Keeping this helper text-only removes the need to ship a
+ * browser-side HTML sanitizer and its associated attack surface.
  */
-window.sanitize = (htmlInput) => {
-  if (typeof htmlInput !== 'string') {
-    return ''; // Ensure a string is always returned
-  }
-  // You can pass configuration as 2nd arg if needed.
-  return DOMPurify.sanitize(htmlInput);
+window.sanitize = (textInput) => {
+  return typeof textInput === 'string' ? textInput : '';
 };
