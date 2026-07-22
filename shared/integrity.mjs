@@ -136,10 +136,11 @@ function eventDate(update, timestamp) {
 
 export function normalizeCrossrefEvents(message) {
   if (!message || typeof message !== 'object') return [];
-  const updates = [];
-  for (const key of ['update-to', 'updated-by']) {
-    if (Array.isArray(message[key])) updates.push(...message[key]);
-  }
+  // For a queried work, `updated-by` contains notices that materially update
+  // that work. `update-to` describes what the queried record itself updates;
+  // treating it as the queried work's status would falsely flag correction or
+  // retraction notices as corrected/retracted.
+  const updates = Array.isArray(message['updated-by']) ? message['updated-by'].slice(0, 100) : [];
 
   const events = [];
   const seen = new Set();
@@ -214,7 +215,7 @@ export function summarizeIntegrityRecords(records, totalRequested = 0) {
 
   for (const record of normalizedRecords) {
     if (record?.lookupStatus === 'checked') checked += 1;
-    else if (record?.lookupStatus === 'failed') failed += 1;
+    else if (record?.lookupStatus === 'failed' || record?.lookupStatus === 'not-found') failed += 1;
     const statuses = new Set((record?.events || []).map(event => event.status).filter(Boolean));
     for (const status of statuses) {
       if (Object.hasOwn(counts, status)) counts[status] += 1;

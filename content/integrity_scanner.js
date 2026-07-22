@@ -97,9 +97,10 @@
       element.getAttribute?.('data-bib-id') ||
       element.getAttribute?.('data-reference-id');
     const normalized = String(existing || '').trim();
-    return /^[A-Za-z0-9_.:-]{1,256}$/.test(normalized)
-      ? normalized
-      : `integrity-ref-${index + 1}`;
+    if (/^[A-Za-z0-9_.:-]{1,256}$/.test(normalized)) return normalized;
+    const generated = `integrity-ref-${index + 1}`;
+    element.setAttribute('data-mdpi-filter-ref-id', generated);
+    return generated;
   }
 
   function scanDocument() {

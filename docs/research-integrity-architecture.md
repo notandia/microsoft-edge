@@ -46,7 +46,7 @@ Title-only matching must never produce a high-confidence warning without corrobo
 5. The popup displays coverage, event timelines, source provenance, and accessible color/icon indicators.
 6. The toolbar badge shows the number of affected works, not the number of individual notices.
 
-The initial implementation caps remote checks at 100 DOI identifiers per page and exposes deferred and failed counts instead of silently marking unchecked references as clear.
+The initial implementation caps remote checks at 50 DOI identifiers per page and exposes deferred and failed counts instead of silently marking unchecked references as clear.
 
 ## Privacy invariant
 

@@ -190,7 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const summary = report.summary || {};
     const coverage = [`${summary.checked || 0} checked`];
     if (report.notChecked) coverage.push(`${report.notChecked} deferred by page limit`);
-    if (summary.failed) coverage.push(`${summary.failed} failed`);
+    if (summary.failed) coverage.push(`${summary.failed} unresolved`);
     coverage.push(report.provider || 'Crossref'); el.coverage.textContent = coverage.join(' · ');
     const affected = (report.records || []).filter(record => record.primaryStatus);
     if (!affected.length) {

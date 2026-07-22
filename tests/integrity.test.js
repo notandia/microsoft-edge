@@ -24,7 +24,7 @@ test('Crossref and Retraction Watch update labels map to stable statuses', async
 test('Crossref updates preserve source, record id, notice and chronology', async () => {
   const { normalizeCrossrefEvents } = await integrityPromise;
   const events = normalizeCrossrefEvents({
-    'update-to': [
+    'updated-by': [
       {
         DOI: '10.1000/notice-2',
         type: 'retraction',
@@ -43,6 +43,23 @@ test('Crossref updates preserve source, record id, notice and chronology', async
   assert.deepEqual(events.map(event => event.status), ['expression-of-concern', 'retracted']);
   assert.equal(events[1].recordId, 42);
   assert.equal(events[1].noticeDoi, '10.1000/notice-2');
+});
+
+
+
+test('an update notice is not misclassified from its update-to relationship', async () => {
+  const { normalizeCrossrefEvents } = await integrityPromise;
+  const events = normalizeCrossrefEvents({
+    DOI: '10.1000/retraction-notice',
+    'update-to': [
+      {
+        DOI: '10.1000/original-paper',
+        type: 'retraction',
+        updated: { 'date-time': '2025-02-01T00:00:00Z' }
+      }
+    ]
+  });
+  assert.deepEqual(events, []);
 });
 
 test('reinstatement supersedes an older retraction without deleting history', async () => {
